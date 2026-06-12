@@ -10,7 +10,7 @@ from skimage.filters import apply_hysteresis_threshold
 from skimage.morphology import thin
 from skimage.restoration import denoise_tv_chambolle
 
-SUPPORTED_WAVELETS = {"haar", "db2", "sym2"}
+SUPPORTED_WAVELETS = {"haar", "db2", "sym2", "sym4"}
 SUPPORTED_TRANSFORM_MODES = {"dwt", "swt"}
 SUPPORTED_FUSION_MODES = {"weighted", "max"}
 SUPPORTED_RESPONSE_MODES = {"weighted", "multiscale_consistency", "coarse_enhanced", "coarse_ratio"}
@@ -175,7 +175,8 @@ def decompose_image(
     level: int = 1,
 ) -> list[Any]:
     resolved_level = resolve_decomposition_level(gray_image.shape, wavelet, level)
-    return pywt.wavedec2(gray_image.astype(np.float32), wavelet=wavelet, level=resolved_level)
+    normalized_gray = gray_image.astype(np.float32) / 255.0
+    return pywt.wavedec2(normalized_gray, wavelet=wavelet, level=resolved_level)
 
 
 def decompose_image_swt(
@@ -185,8 +186,9 @@ def decompose_image_swt(
 ) -> list[tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]]:
     resolved_level = resolve_decomposition_level(gray_image.shape, wavelet, level)
     padded_image, _ = pad_for_swt(gray_image, resolved_level)
+    normalized_gray = padded_image.astype(np.float32) / 255.0
     return pywt.swt2(
-        padded_image.astype(np.float32),
+        normalized_gray,
         wavelet=validate_wavelet_name(wavelet),
         level=resolved_level,
         trim_approx=False,
@@ -209,9 +211,12 @@ def build_level_weights(num_levels: int, level_weights: list[float] | None = Non
 def build_detail_response(
     detail_coeffs: tuple[np.ndarray, np.ndarray, np.ndarray],
     target_shape: tuple[int, int],
+    use_diagonal_detail: bool = True,
+    diagonal_weight: float = 1.0,
 ) -> dict[str, np.ndarray]:
     c_h, c_v, c_d = detail_coeffs
-    response = np.sqrt(c_h**2 + c_v**2 + c_d**2)
+    diagonal_term = max(0.0, float(diagonal_weight)) * c_d**2 if use_diagonal_detail else 0.0
+    response = np.sqrt(c_h**2 + c_v**2 + diagonal_term)
 
     return {
         "cH_horizontal_detail": resize_to_shape(c_h, target_shape).astype(np.float32),
@@ -227,6 +232,8 @@ def aggregate_multilevel_responses(
     level_weights: list[float] | None = None,
     fusion_mode: str = "weighted",
     normalize_each_level: bool = False,
+    use_diagonal_detail: bool = True,
+    diagonal_weight: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     fusion_mode = validate_choice(fusion_mode, SUPPORTED_FUSION_MODES, "fusion mode")
     weights = build_level_weights(len(coeffs) - 1, level_weights)
@@ -239,7 +246,12 @@ def aggregate_multilevel_responses(
 
     # PyWavelets returns details from coarse to fine; reversed order makes level_1 the finest scale.
     for level_index, detail_coeffs in enumerate(reversed(coeffs[1:]), start=1):
-        detail_maps = build_detail_response(detail_coeffs, target_shape)
+        detail_maps = build_detail_response(
+            detail_coeffs,
+            target_shape,
+            use_diagonal_detail=use_diagonal_detail,
+            diagonal_weight=diagonal_weight,
+        )
         c_h = detail_maps["cH_horizontal_detail"]
         c_v = detail_maps["cV_vertical_detail"]
         c_d = detail_maps["cD_diagonal_detail"]
@@ -254,6 +266,9 @@ def aggregate_multilevel_responses(
         intermediates[f"cH_horizontal_detail_level_{level_index}"] = c_h
         intermediates[f"cV_vertical_detail_level_{level_index}"] = c_v
         intermediates[f"cD_diagonal_detail_level_{level_index}"] = c_d
+        intermediates[f"LH_level_{level_index}"] = c_h
+        intermediates[f"HL_level_{level_index}"] = c_v
+        intermediates[f"HH_level_{level_index}"] = c_d
         intermediates[f"edge_response_level_{level_index}"] = response
 
         if level_index == 1:
@@ -274,11 +289,13 @@ def aggregate_multilevel_responses(
             fused_response = np.maximum(fused_response, response)
 
     # Keep the final response explicitly tied to the fused high-frequency subbands.
-    fused_response = np.sqrt(np.maximum(fused_c_h**2 + fused_c_v**2 + fused_c_d**2, 0.0))
+    diagonal_term = max(0.0, float(diagonal_weight)) * fused_c_d**2 if use_diagonal_detail else 0.0
+    fused_response = np.sqrt(np.maximum(fused_c_h**2 + fused_c_v**2 + diagonal_term, 0.0))
     intermediates["fused_cH_horizontal_detail"] = fused_c_h
     intermediates["fused_cV_vertical_detail"] = fused_c_v
     intermediates["fused_cD_diagonal_detail"] = fused_c_d
     intermediates["fused_edge_response_raw"] = fused_response
+    intermediates["fused_edge_response"] = fused_response
     return fused_response, fused_c_h, fused_c_v, intermediates
 
 
@@ -288,6 +305,8 @@ def aggregate_swt_responses(
     level_weights: list[float] | None = None,
     fusion_mode: str = "weighted",
     normalize_each_level: bool = False,
+    use_diagonal_detail: bool = True,
+    diagonal_weight: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     fusion_mode = validate_choice(fusion_mode, SUPPORTED_FUSION_MODES, "fusion mode")
     weights = build_level_weights(len(coeffs), level_weights)
@@ -303,7 +322,8 @@ def aggregate_swt_responses(
         c_h = resize_to_shape(c_h, target_shape).astype(np.float32)
         c_v = resize_to_shape(c_v, target_shape).astype(np.float32)
         c_d = resize_to_shape(c_d, target_shape).astype(np.float32)
-        response = np.sqrt(np.maximum(c_h**2 + c_v**2 + c_d**2, 0.0))
+        diagonal_term = max(0.0, float(diagonal_weight)) * c_d**2 if use_diagonal_detail else 0.0
+        response = np.sqrt(np.maximum(c_h**2 + c_v**2 + diagonal_term, 0.0))
 
         if normalize_each_level:
             c_h = normalize_signed_float(c_h)
@@ -315,6 +335,10 @@ def aggregate_swt_responses(
         intermediates[f"cH_horizontal_detail_level_{level_index}"] = c_h
         intermediates[f"cV_vertical_detail_level_{level_index}"] = c_v
         intermediates[f"cD_diagonal_detail_level_{level_index}"] = c_d
+        intermediates[f"LL_level_{level_index}"] = resize_to_shape(approximation, target_shape)
+        intermediates[f"LH_level_{level_index}"] = c_h
+        intermediates[f"HL_level_{level_index}"] = c_v
+        intermediates[f"HH_level_{level_index}"] = c_d
         intermediates[f"edge_response_level_{level_index}"] = response
 
         if level_index == 1:
@@ -335,11 +359,13 @@ def aggregate_swt_responses(
             fused_c_d = np.where(np.abs(c_d) >= np.abs(fused_c_d), c_d, fused_c_d)
             fused_response = np.maximum(fused_response, response)
 
-    fused_response = np.sqrt(np.maximum(fused_c_h**2 + fused_c_v**2 + fused_c_d**2, 0.0))
+    diagonal_term = max(0.0, float(diagonal_weight)) * fused_c_d**2 if use_diagonal_detail else 0.0
+    fused_response = np.sqrt(np.maximum(fused_c_h**2 + fused_c_v**2 + diagonal_term, 0.0))
     intermediates["fused_cH_horizontal_detail"] = fused_c_h
     intermediates["fused_cV_vertical_detail"] = fused_c_v
     intermediates["fused_cD_diagonal_detail"] = fused_c_d
     intermediates["fused_edge_response_raw"] = fused_response
+    intermediates["fused_edge_response"] = fused_response
     return fused_response, fused_c_h, fused_c_v, intermediates
 
 
@@ -544,7 +570,7 @@ def threshold_edge_map(
     fixed_threshold: int | None = None,
     percentile: float = 90.0,
     low_threshold_ratio: float = 0.2,
-    use_hysteresis: bool = True,
+    use_hysteresis: bool = False,
     adaptive_block_size: int = 31,
     adaptive_percentile: float = 95.0,
     adaptive_use_hysteresis: bool = True,
@@ -850,6 +876,8 @@ def compute_wavelet_response(
     gray_image: np.ndarray,
     wavelet: str = "haar",
     level: int = 1,
+    use_diagonal_detail: bool = True,
+    diagonal_weight: float = 1.0,
     use_clahe: bool = False,
     use_tv_denoise: bool = False,
     tv_weight: float = 0.08,
@@ -901,6 +929,8 @@ def compute_wavelet_response(
             level_weights=level_weights,
             fusion_mode=fusion_mode,
             normalize_each_level=normalize_each_level,
+            use_diagonal_detail=use_diagonal_detail,
+            diagonal_weight=diagonal_weight,
         )
     else:
         coeffs = decompose_image(preprocessed, wavelet=wavelet, level=level)
@@ -910,8 +940,13 @@ def compute_wavelet_response(
             level_weights=level_weights,
             fusion_mode=fusion_mode,
             normalize_each_level=normalize_each_level,
+            use_diagonal_detail=use_diagonal_detail,
+            diagonal_weight=diagonal_weight,
         )
-        wavelet_maps["cA_approximation"] = resize_to_shape(coeffs[0], gray_image.shape)
+        resolved_level = len(coeffs) - 1
+        approximation = resize_to_shape(coeffs[0], gray_image.shape)
+        wavelet_maps["cA_approximation"] = approximation
+        wavelet_maps[f"LL_level_{resolved_level}"] = approximation
 
     wavelet_maps["transform_mode_dwt_or_swt"] = np.full(gray_image.shape, 255 if transform_mode == "swt" else 0, dtype=np.uint8)
     mode_response, response_mode_maps = apply_response_mode(
@@ -961,14 +996,14 @@ def compute_wavelet_response(
 
 def detect_edges(
     image_source: str | Path | np.ndarray,
-    wavelet: str = "db2",
-    level: int = 2,
-    threshold_method: str = "otsu",
+    wavelet: str = "haar",
+    level: int = 1,
+    threshold_method: str = "percentile",
     threshold_ratio: float = 0.2,
     fixed_threshold: int | None = None,
-    percentile: float = 90.0,
+    percentile: float = 95.0,
     low_threshold_ratio: float = 0.2,
-    use_hysteresis: bool = True,
+    use_hysteresis: bool = False,
     adaptive_block_size: int = 31,
     adaptive_percentile: float = 95.0,
     adaptive_use_hysteresis: bool = True,
@@ -987,9 +1022,11 @@ def detect_edges(
     bilateral_sigma_color: float = 50.0,
     bilateral_sigma_space: float = 50.0,
     min_object_size: int = 0,
-    use_thinning: bool = True,
+    use_thinning: bool = False,
     level_weights: list[float] | None = None,
     fusion_mode: str = "weighted",
+    use_diagonal_detail: bool = True,
+    diagonal_weight: float = 1.0,
     normalize_each_level: bool = False,
     use_gradient_assist: bool = False,
     gradient_weight: float = 0.2,
@@ -1019,6 +1056,8 @@ def detect_edges(
         gray_image,
         wavelet=wavelet,
         level=level,
+        use_diagonal_detail=use_diagonal_detail,
+        diagonal_weight=diagonal_weight,
         use_clahe=use_clahe,
         use_tv_denoise=use_tv_denoise,
         tv_weight=tv_weight,

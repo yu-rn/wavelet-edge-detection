@@ -22,37 +22,29 @@ def parse_args() -> argparse.Namespace:
 
 def candidate_configs() -> list[dict[str, object]]:
     configs: list[dict[str, object]] = []
-    percentiles = [92.0, 94.0, 95.0, 96.0, 97.0]
-    response_modes = ["weighted", "coarse_enhanced", "multiscale_consistency"]
-    texture_options = [
-        {"use_texture_suppression": False, "texture_suppression_mode": "linear", "texture_weight": 0.0},
-        {"use_texture_suppression": True, "texture_suppression_mode": "linear", "texture_weight": 0.15},
-        {"use_texture_suppression": True, "texture_suppression_mode": "linear", "texture_weight": 0.25},
-        {"use_texture_suppression": True, "texture_suppression_mode": "exp", "texture_strength": 0.8},
-        {"use_texture_suppression": True, "texture_suppression_mode": "exp", "texture_strength": 1.0},
-        {"use_texture_suppression": True, "texture_suppression_mode": "exp", "texture_strength": 1.5},
-    ]
-    min_skeleton_lengths = [0, 3, 5, 8, 12]
-    min_component_mean_responses = [0.0, 5.0, 10.0, 15.0]
-    level_weight_options = {
-        1: [None],
-        2: [None, [0.7, 0.3], [0.5, 0.5], [0.3, 0.7]],
-    }
-    tv_options = [
-        {"use_tv_denoise": False, "tv_weight": 0.08},
-        {"use_tv_denoise": True, "tv_weight": 0.05},
-    ]
+    wavelets = ["haar", "db2", "sym4"]
+    levels = [1, 2, 3]
+    use_diagonal_options = [True, False]
+    diagonal_weights = [0.0, 0.5, 1.0]
+    fusion_modes = ["weighted", "max"]
+    threshold_methods = ["otsu", "percentile"]
+    percentiles = [92.0, 94.0, 96.0, 98.0]
+    thinning_options = [True, False]
+    min_skeleton_lengths = [0, 5, 10]
 
     def add_config(config: dict[str, object]) -> None:
         defaults: dict[str, object] = {
-            "use_gradient_assist": True,
-            "gradient_weight": 0.15,
+            "transform_mode": "dwt",
+            "response_mode": "weighted",
+            "use_gradient_assist": False,
+            "gradient_weight": 0.2,
             "gradient_mode": "multiply",
             "use_nms": True,
             "use_morphological_closing": False,
-            "use_thinning": True,
+            "use_thinning": False,
             "min_object_size": 0,
             "use_endpoint_linking": False,
+            "use_hysteresis": False,
             "adaptive_use_hysteresis": True,
             "adaptive_low_ratio": 0.7,
             "use_texture_suppression": False,
@@ -69,32 +61,29 @@ def candidate_configs() -> list[dict[str, object]]:
         defaults.update(config)
         configs.append(defaults)
 
-    for transform_mode in ["dwt", "swt"]:
-        for wavelet in ["haar", "db2"]:
-            for level in [1, 2]:
-                for level_weights in level_weight_options[level]:
-                    for response_mode in response_modes:
-                        for percentile in percentiles:
-                            for texture_option in texture_options:
-                                for min_skeleton_length in min_skeleton_lengths:
-                                    for min_component_mean_response in min_component_mean_responses:
-                                        for tv_option in tv_options:
-                                            add_config(
-                                                {
-                                                    "transform_mode": transform_mode,
-                                                    "wavelet": wavelet,
-                                                    "level": level,
-                                                    "threshold_method": "percentile",
-                                                    "percentile": percentile,
-                                                    "low_threshold_ratio": 0.5,
-                                                    "response_mode": response_mode,
-                                                    "level_weights": level_weights,
-                                                    "min_skeleton_length": min_skeleton_length,
-                                                    "min_component_mean_response": min_component_mean_response,
-                                                    **texture_option,
-                                                    **tv_option,
-                                                }
-                                            )
+    for wavelet in wavelets:
+        for level in levels:
+            for use_diagonal_detail in use_diagonal_options:
+                for diagonal_weight in diagonal_weights:
+                    for fusion_mode in fusion_modes:
+                        for threshold_method in threshold_methods:
+                            for percentile in percentiles:
+                                for use_thinning in thinning_options:
+                                    for min_skeleton_length in min_skeleton_lengths:
+                                        add_config(
+                                            {
+                                                "wavelet": wavelet,
+                                                "level": level,
+                                                "use_diagonal_detail": use_diagonal_detail,
+                                                "diagonal_weight": diagonal_weight,
+                                                "fusion_mode": fusion_mode,
+                                                "threshold_method": threshold_method,
+                                                "percentile": percentile,
+                                                "low_threshold_ratio": 0.45,
+                                                "use_thinning": use_thinning,
+                                                "min_skeleton_length": min_skeleton_length,
+                                            }
+                                        )
     return configs
 
 
@@ -180,16 +169,15 @@ def main() -> None:
     per_image_output = args.output_csv.with_name(f"{args.output_csv.stem}_per_image.csv")
     per_image_frame.to_csv(per_image_output, index=False)
     columns = [
-        "transform_mode",
         "wavelet",
         "level",
+        "use_diagonal_detail",
+        "diagonal_weight",
+        "fusion_mode",
         "threshold_method",
         "percentile",
-        "response_mode",
-        "texture_suppression_mode",
-        "texture_strength",
+        "use_thinning",
         "min_skeleton_length",
-        "min_component_mean_response",
         "precision",
         "recall",
         "f1_score",

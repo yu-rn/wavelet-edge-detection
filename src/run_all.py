@@ -3,9 +3,23 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .evaluate import compute_precision_recall_f1, gt_path_from_image_name, load_binary_mask, save_metrics_table
-from .visualize import save_comparison_figure, save_error_map, save_image, save_intermediate_images
-from .wavelet_edge import detect_edges, parse_level_weights
+from .baselines import canny_edges, sobel_edges
+from .evaluate import (
+    compute_precision_recall_f1,
+    compute_strict_and_tolerant_metrics,
+    gt_path_from_image_name,
+    load_binary_mask,
+    save_dual_metrics_tables,
+    save_metrics_table,
+)
+from .visualize import (
+    save_comparison_figure,
+    save_error_map,
+    save_image,
+    save_intermediate_images,
+    save_wavelet_process_figure,
+)
+from .wavelet_edge import detect_edges, parse_level_weights, read_image
 
 
 def parse_args() -> argparse.Namespace:
@@ -13,13 +27,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-dir", type=Path, default=Path("samples/images"))
     parser.add_argument("--gt-dir", type=Path, default=Path("samples/groundTruth"))
     parser.add_argument("--output-dir", type=Path, default=Path("results"))
-    parser.add_argument("--wavelet", type=str, default="db2")
+    parser.add_argument("--wavelet", type=str, default="haar", choices=["haar", "db2", "sym2", "sym4"])
     parser.add_argument("--transform-mode", type=str, default="dwt", choices=["dwt", "swt"])
-    parser.add_argument("--level", type=int, default=2)
+    parser.add_argument("--level", type=int, default=1, choices=[1, 2, 3])
     parser.add_argument("--threshold-method", type=str, default="percentile")
     parser.add_argument("--threshold-ratio", type=float, default=0.2)
     parser.add_argument("--fixed-threshold", type=int, default=None)
-    parser.add_argument("--percentile", type=float, default=94.0)
+    parser.add_argument("--percentile", type=float, default=95.0)
     parser.add_argument("--low-threshold-ratio", type=float, default=0.45)
     parser.add_argument("--adaptive-block-size", type=int, default=31)
     parser.add_argument("--adaptive-percentile", type=float, default=95.0)
@@ -28,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adaptive-low-ratio", type=float, default=0.7)
     parser.add_argument("--adaptive-global-floor-percentile", type=float, default=90.0)
     parser.add_argument("--adaptive-min-high-threshold", type=float, default=20.0)
-    parser.add_argument("--use-hysteresis", action="store_true", default=True)
+    parser.add_argument("--use-hysteresis", action="store_true", default=False)
     parser.add_argument("--no-hysteresis", dest="use_hysteresis", action="store_false")
     parser.add_argument("--use-clahe", action="store_true")
     parser.add_argument("--use-tv-denoise", action="store_true")
@@ -42,10 +56,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bilateral-sigma-color", type=float, default=50.0)
     parser.add_argument("--bilateral-sigma-space", type=float, default=50.0)
     parser.add_argument("--min-object-size", type=int, default=0)
-    parser.add_argument("--use-thinning", action="store_true", default=True)
+    parser.add_argument("--use-thinning", action="store_true", default=False)
     parser.add_argument("--no-thinning", dest="use_thinning", action="store_false")
     parser.add_argument("--fusion-mode", type=str, default="weighted")
-    parser.add_argument("--response-mode", type=str, default="coarse_enhanced")
+    parser.add_argument("--use-diagonal-detail", action="store_true", default=True)
+    parser.add_argument("--no-diagonal-detail", dest="use_diagonal_detail", action="store_false")
+    parser.add_argument("--diagonal-weight", type=float, default=1.0)
+    parser.add_argument("--response-mode", type=str, default="weighted")
     parser.add_argument("--normalize-each-level", action="store_true")
     parser.add_argument("--level-weights", type=str, default=None)
     parser.add_argument("--use-gradient-assist", action="store_true")
@@ -59,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--closing-kernel-size", type=int, default=3)
     parser.add_argument("--use-morphological-opening", action="store_true")
     parser.add_argument("--opening-kernel-size", type=int, default=3)
-    parser.add_argument("--use-texture-suppression", action="store_true", default=True)
+    parser.add_argument("--use-texture-suppression", action="store_true", default=False)
     parser.add_argument("--texture-window-size", type=int, default=15)
     parser.add_argument("--texture-weight", type=float, default=0.2)
     parser.add_argument("--texture-suppression-mode", type=str, default="linear")
@@ -68,9 +85,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-endpoint-linking", action="store_true")
     parser.add_argument("--link-radius", type=int, default=6)
     parser.add_argument("--link-angle-threshold", type=float, default=35.0)
-    parser.add_argument("--min-skeleton-length", type=int, default=5)
-    parser.add_argument("--min-component-mean-response", type=float, default=5.0)
+    parser.add_argument("--min-skeleton-length", type=int, default=0)
+    parser.add_argument("--min-component-mean-response", type=float, default=0.0)
     parser.add_argument("--tolerance-radius", type=int, default=0)
+    parser.add_argument("--run-baselines", action="store_true")
     return parser.parse_args()
 
 
@@ -107,6 +125,8 @@ def run_pipeline(
     min_object_size: int,
     use_thinning: bool,
     fusion_mode: str,
+    use_diagonal_detail: bool,
+    diagonal_weight: float,
     response_mode: str,
     normalize_each_level: bool,
     level_weights: list[float] | None,
@@ -131,6 +151,7 @@ def run_pipeline(
     min_skeleton_length: int,
     min_component_mean_response: float,
     tolerance_radius: int,
+    run_baselines: bool,
 ) -> None:
     edges_dir = output_dir / "edges"
     intermediate_dir = output_dir / "intermediate"
@@ -139,12 +160,17 @@ def run_pipeline(
 
     image_paths = sorted(image_dir.glob("*"))
     records: list[dict[str, float | str]] = []
+    strict_records: list[dict[str, float | str]] = []
+    tolerant_records: list[dict[str, float | str]] = []
+    baseline_strict_records: list[dict[str, float | str]] = []
+    baseline_tolerant_records: list[dict[str, float | str]] = []
 
     for image_path in image_paths:
         if image_path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}:
             continue
 
         image_stem = image_path.stem
+        original_image = read_image(image_path)
         detection = detect_edges(
             image_path,
             wavelet=wavelet,
@@ -176,6 +202,8 @@ def run_pipeline(
             min_object_size=min_object_size,
             use_thinning=use_thinning,
             fusion_mode=fusion_mode,
+            use_diagonal_detail=use_diagonal_detail,
+            diagonal_weight=diagonal_weight,
             response_mode=response_mode,
             normalize_each_level=normalize_each_level,
             level_weights=level_weights,
@@ -207,8 +235,11 @@ def run_pipeline(
         gt_path = gt_path_from_image_name(image_path.name, gt_dir)
         ground_truth = load_binary_mask(gt_path)
 
+        strict_metrics, tolerant_metrics = compute_strict_and_tolerant_metrics(edge_map, ground_truth)
         metrics = compute_precision_recall_f1(edge_map, ground_truth, tolerance_radius=tolerance_radius)
         records.append({"image_name": image_path.name, **metrics})
+        strict_records.append({"image_name": image_path.name, **strict_metrics})
+        tolerant_records.append({"image_name": image_path.name, **tolerant_metrics})
 
         save_image(edge_map, edges_dir / f"{image_stem}_edge.png")
         save_intermediate_images(image_stem, intermediate, intermediate_dir)
@@ -219,13 +250,53 @@ def run_pipeline(
             ground_truth=ground_truth * 255,
             output_path=comparisons_dir / f"{image_stem}_comparison.png",
         )
+        save_wavelet_process_figure(
+            image_stem=image_stem,
+            original=original_image,
+            gray=gray_image,
+            intermediate=intermediate,
+            prediction=edge_map,
+            ground_truth=ground_truth * 255,
+            output_path=comparisons_dir / f"{image_stem}_wavelet_process.png",
+        )
         save_error_map(
             prediction=edge_map,
             ground_truth=ground_truth * 255,
             output_path=comparisons_dir / f"{image_stem}_error_map.png",
         )
 
+        if run_baselines:
+            baseline_results = {
+                "sobel": sobel_edges(image_path, threshold_method="otsu", percentile=percentile),
+                "canny": canny_edges(image_path),
+            }
+            for method_name, baseline in baseline_results.items():
+                baseline_map = baseline["binary_edge_map"]
+                save_image(baseline_map, edges_dir / f"{image_stem}_{method_name}_edge.png")
+                save_comparison_figure(
+                    image_stem=f"{image_stem}_{method_name}",
+                    original=gray_image,
+                    prediction=baseline_map,
+                    ground_truth=ground_truth * 255,
+                    output_path=comparisons_dir / f"{image_stem}_{method_name}_comparison.png",
+                )
+                baseline_strict, baseline_tolerant = compute_strict_and_tolerant_metrics(baseline_map, ground_truth)
+                baseline_strict_records.append(
+                    {"image_name": image_path.name, "method": method_name, **baseline_strict}
+                )
+                baseline_tolerant_records.append(
+                    {"image_name": image_path.name, "method": method_name, **baseline_tolerant}
+                )
+
     save_metrics_table(records, metrics_dir / "metrics.csv")
+    save_dual_metrics_tables(strict_records, tolerant_records, metrics_dir, prefix="metrics")
+    if run_baselines:
+        save_dual_metrics_tables(
+            baseline_strict_records,
+            baseline_tolerant_records,
+            metrics_dir,
+            prefix="baseline_metrics",
+        )
 
 
 def main() -> None:
@@ -263,6 +334,8 @@ def main() -> None:
         min_object_size=args.min_object_size,
         use_thinning=args.use_thinning,
         fusion_mode=args.fusion_mode,
+        use_diagonal_detail=args.use_diagonal_detail,
+        diagonal_weight=args.diagonal_weight,
         response_mode=args.response_mode,
         normalize_each_level=args.normalize_each_level,
         level_weights=parse_level_weights(args.level_weights),
@@ -287,6 +360,7 @@ def main() -> None:
         min_skeleton_length=args.min_skeleton_length,
         min_component_mean_response=args.min_component_mean_response,
         tolerance_radius=args.tolerance_radius,
+        run_baselines=args.run_baselines,
     )
 
 

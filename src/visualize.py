@@ -82,6 +82,55 @@ def save_error_map(
     cv2.imwrite(str(output_path), cv2.cvtColor(error_map, cv2.COLOR_RGB2BGR))
 
 
+def save_wavelet_process_figure(
+    image_stem: str,
+    original: np.ndarray,
+    gray: np.ndarray,
+    intermediate: dict[str, np.ndarray],
+    prediction: np.ndarray,
+    ground_truth: np.ndarray,
+    output_path: Path,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def first_matching(prefix: str, fallback: np.ndarray | None = None) -> np.ndarray:
+        keys = sorted(key for key in intermediate if key.startswith(prefix))
+        if keys:
+            return intermediate[keys[0]]
+        if fallback is not None:
+            return fallback
+        return np.zeros_like(gray)
+
+    panels = [
+        ("Original", original),
+        ("Gray", gray),
+        ("LL", first_matching("LL_level_", intermediate.get("cA_approximation"))),
+        ("LH", first_matching("LH_level_", intermediate.get("cH_horizontal_detail"))),
+        ("HL", first_matching("HL_level_", intermediate.get("cV_vertical_detail"))),
+        ("HH", first_matching("HH_level_", intermediate.get("cD_diagonal_detail"))),
+        ("Response", intermediate.get("fused_edge_response", intermediate.get("normalized_edge_response", gray))),
+        ("Binary", intermediate.get("threshold_binary_raw", prediction)),
+        ("Postprocessed", intermediate.get("postprocessed_binary_edge_map", prediction)),
+        ("Ground Truth", ground_truth),
+    ]
+
+    figure, axes = plt.subplots(2, 5, figsize=(15, 6))
+    for axis, (title, image) in zip(axes.ravel(), panels):
+        display = image if image.dtype == np.uint8 else normalize_for_display(image)
+        if display.ndim == 3:
+            display = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+            axis.imshow(display)
+        else:
+            axis.imshow(display, cmap="gray")
+        axis.set_title(title)
+        axis.axis("off")
+
+    figure.suptitle(f"Wavelet Edge Detection Process: {image_stem}", fontsize=12)
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(figure)
+
+
 def normalize_for_display(image: np.ndarray) -> np.ndarray:
     image = image.astype(np.float32)
     min_value = float(image.min())

@@ -53,6 +53,15 @@ def compute_precision_recall_f1(
     }
 
 
+def compute_strict_and_tolerant_metrics(
+    prediction: np.ndarray,
+    ground_truth: np.ndarray,
+) -> tuple[dict[str, float], dict[str, float]]:
+    strict_metrics = compute_precision_recall_f1(prediction, ground_truth, tolerance_radius=0)
+    tolerant_metrics = compute_precision_recall_f1(prediction, ground_truth, tolerance_radius=1)
+    return strict_metrics, tolerant_metrics
+
+
 def save_metrics_table(records: list[dict[str, float | str]], output_csv: Path) -> pd.DataFrame:
     frame = pd.DataFrame(records)
     if not frame.empty:
@@ -68,3 +77,14 @@ def save_metrics_table(records: list[dict[str, float | str]], output_csv: Path) 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(output_csv, index=False)
     return frame
+
+
+def save_dual_metrics_tables(
+    strict_records: list[dict[str, float | str]],
+    tolerant_records: list[dict[str, float | str]],
+    output_dir: Path,
+    prefix: str = "metrics",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    strict_frame = save_metrics_table(strict_records, output_dir / f"{prefix}_strict.csv")
+    tolerant_frame = save_metrics_table(tolerant_records, output_dir / f"{prefix}_tolerant.csv")
+    return strict_frame, tolerant_frame
