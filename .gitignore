@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+results/intermediate/
+results/comparisons/
+results/edges/
+results/.mplconfig/
+
+*.zip

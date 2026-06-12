@@ -1,0 +1,13 @@
+transform_mode,wavelet,level,threshold_method,low_threshold_ratio,use_gradient_assist,gradient_weight,gradient_mode,use_nms,use_morphological_closing,use_thinning,min_object_size,level_weights,precision,recall,f1_score,tolerance_radius
+dwt,haar,1,otsu,0.3,True,0.15,multiply,True,False,False,0,,0.659534861047315,0.3017944032513454,0.3192848902386651,1
+dwt,haar,1,otsu,0.3,True,0.15,multiply,True,False,True,0,,0.6631531876500928,0.2894204547993247,0.3139466620859135,1
+dwt,haar,1,otsu,0.4,True,0.15,multiply,True,False,True,0,,0.666421117277492,0.287586329543407,0.31340892217368843,1
+dwt,haar,1,otsu,0.3,True,0.15,multiply,True,False,False,5,,0.6657522607776191,0.24361120463304745,0.28724048270601926,1
+dwt,haar,1,otsu,0.3,True,0.15,multiply,True,False,True,5,,0.6700826066203907,0.23305853195485468,0.28191959450741355,1
+dwt,haar,1,otsu,0.4,True,0.15,multiply,True,False,True,5,,0.6734507826692749,0.2307443827098253,0.2806359037521881,1
+dwt,haar,1,otsu,0.3,True,0.15,multiply,True,False,False,10,,0.6743661839315052,0.150077248956572,0.21350231508948045,1
+dwt,haar,1,otsu,0.3,True,0.15,multiply,True,False,True,10,,0.67830406600038,0.14473202773509844,0.209830294565807,1
+dwt,haar,1,otsu,0.4,True,0.15,multiply,True,False,True,10,,0.68066198684506,0.14216249742245055,0.20808338970960893,1
+dwt,haar,1,otsu,0.3,True,0.15,multiply,True,False,False,20,,0.7259788118640836,0.06327018933648365,0.10932333987008912,1
+dwt,haar,1,otsu,0.3,True,0.15,multiply,True,False,True,20,,0.7302887427690815,0.062132820524671915,0.10822062935513421,1
+dwt,haar,1,otsu,0.4,True,0.15,multiply,True,False,True,20,,0.7354642527191589,0.06167808082064006,0.10815298313308536,1

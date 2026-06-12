@@ -1,0 +1,11 @@
+use_gradient_assist,gradient_weight,gradient_mode,use_nms,use_morphological_closing,use_thinning,min_object_size,use_endpoint_linking,adaptive_use_hysteresis,adaptive_low_ratio,use_texture_suppression,texture_window_size,texture_weight,use_tv_denoise,tv_weight,transform_mode,wavelet,level,threshold_method,low_threshold_ratio,response_mode,level_weights,precision,recall,f1_score,tolerance_radius
+True,0.15,multiply,True,False,True,0,False,True,0.7,True,15,0.45,False,0.08,dwt,haar,1,otsu,0.4,weighted,,0.6346202032543232,0.3187429583981474,0.3406195416286559,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,True,15,0.45,True,0.05,dwt,haar,1,otsu,0.4,weighted,,0.6793282609591942,0.27605261561222266,0.32657123323301207,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,True,15,0.25,False,0.08,dwt,haar,1,otsu,0.4,weighted,,0.6467845439188389,0.30246121547032784,0.32494884723441847,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,True,15,0.25,True,0.05,dwt,haar,1,otsu,0.4,weighted,,0.6885667030543958,0.26683482598478836,0.315554209341625,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,False,15,0.0,False,0.08,dwt,haar,1,otsu,0.4,weighted,,0.666421117277492,0.287586329543407,0.31340892217368843,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,True,15,0.45,True,0.1,dwt,haar,1,otsu,0.4,weighted,,0.6925524917196889,0.25596692328420007,0.3113249384836579,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,False,15,0.0,False,0.08,dwt,haar,1,otsu,0.4,multiscale_consistency,,0.6698586227056031,0.27131079104219635,0.3068516736894228,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,False,15,0.0,True,0.05,dwt,haar,1,otsu,0.4,weighted,,0.6930824874855418,0.25297213024653503,0.30528171392481035,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,True,15,0.25,True,0.1,dwt,haar,1,otsu,0.4,weighted,,0.7055508404603493,0.22871088469019607,0.30201118684168554,1
+True,0.15,multiply,True,False,True,0,False,True,0.7,False,15,0.0,True,0.1,dwt,haar,1,otsu,0.4,weighted,,0.748190239584232,0.19696250036404941,0.2916309896671055,1
